@@ -12,6 +12,7 @@ import Random
 import Time exposing (millisToPosix)
 import Html.Attributes exposing (width)
 import Platform.Cmd as Cmd
+import Dict exposing (remove)
 
 dungeonSpriteSheet : String
 dungeonSpriteSheet = "0x72_DungeonTilesetII_v1.4.png"
@@ -32,16 +33,22 @@ type alias GameObject =
     , h : Float
     }
 
+type alias SpriteGameObject = 
+    { go: GameObject
+    , sp: Sprite
+    , id: Int
+    }
+
 type alias Model =
     { ticks: Int
      , lastPosixTime : Time.Posix
      , fps : Float
      , pressedKeys: List Key
-     , knight :  (GameObject, Sprite)
+     , knight :  SpriteGameObject
      , experience : Int
-     , experianceDiamond : List (GameObject, Sprite)
-     , bullets : List (GameObject, Sprite)
-     , enemies : List (GameObject, Sprite)
+     , experianceDiamond : List SpriteGameObject
+     , bullets : List SpriteGameObject
+     , enemies : List SpriteGameObject
      }
 
      
@@ -53,9 +60,10 @@ init _ =
       , fps = 0
       , pressedKeys = []
       , knight = 
-        ( GameObject (100, 100) 1 20 20
-        , Sprite 192 68 16 28 4 0
-        )
+            SpriteGameObject
+                (GameObject (100, 100) 1 20 20)
+                (Sprite 192 68 16 28 4 0)
+                1
       , experience = 0
       , experianceDiamond = []
       , bullets = []
@@ -79,8 +87,10 @@ addDiamond : Model -> Int -> Model
 addDiamond model randomNumber = 
     { model 
         | experianceDiamond = 
-            ( GameObject (toFloat randomNumber, toFloat randomNumber) 0 20 20
-            , Sprite 288 320 16 16 1 0
+            (SpriteGameObject
+                ( GameObject (toFloat randomNumber, toFloat randomNumber) 0 20 20)
+                ( Sprite 288 320 16 16 1 0 )
+                (List.length model.experianceDiamond + 1)
             ) :: model.experianceDiamond 
     }
 
@@ -92,13 +102,13 @@ subscriptions _ =
         , Sub.map KeyMsg Keyboard.subscriptions
         ]                 
        
-viewGameObject (gameobject, sprite) =
+viewGameObject spriteGameObject =
     viewSprite 
         dungeonSpriteSheet 
         scaleConstant 
-        sprite 
-        ( gameobject.dir |> toFloat )
-        gameobject.pos
+        spriteGameObject.sp 
+        ( spriteGameObject.go.dir |> toFloat )
+        spriteGameObject.go.pos
 
 view : Model -> Html.Html msg
 view model =
@@ -113,14 +123,18 @@ view model =
         , div [] (List.map viewGameObject model.enemies)
         , div [] [ text <| "Experience " ++ String.fromInt model.experience]
         , div [] [ text <| "FPS " ++ Debug.toString model.fps ]
-        , div [] [ text <| Debug.toString model.enemies]
+       -- , div [] [ text <| Debug.toString model.enemies]
         ]
-
-animate (go, sprite) = 
-    if sprite.currentFrame == 4 then 
-        (go, { sprite | currentFrame = 0 })
+animate : SpriteGameObject -> SpriteGameObject
+animate spgo = 
+    let
+        sprite = spgo.sp
+    in
+    
+    if spgo.sp.currentFrame == 4 then 
+        { spgo| sp = { sprite | currentFrame = 0} }
     else
-    (go, { sprite | currentFrame = sprite.currentFrame + 1 })
+        { spgo| sp = { sprite | currentFrame = sprite.currentFrame + 1} }
 
 handleFramerate : Int -> Int -> Bool
 handleFramerate ticks speed = 
@@ -138,18 +152,32 @@ itCollides b1 b2 =
     in
     widthCollission && heightCollision
 
+getRemoved : List SpriteGameObject -> List SpriteGameObject -> List SpriteGameObject -> List SpriteGameObject
+getRemoved oldList newList removed = 
+    case oldList of 
+        [] -> removed
+        (x::xs) -> 
+            let
+                itemRemains = List.any ( \ i -> i.id == x.id ) newList
+            in
+            if not itemRemains then 
+                getRemoved xs newList (x :: removed)
+            else
+                getRemoved xs newList removed
 
-removeIfCollides : (GameObject, Sprite) -> List (GameObject, Sprite) -> List (GameObject, Sprite)
-removeIfCollides (toon, toons) inputList =
+
+
+removeIfCollides : SpriteGameObject -> List SpriteGameObject -> List SpriteGameObject
+removeIfCollides sgo inputList =
     case inputList of
         [] ->
             [] 
 
-        (xgo, xgs) :: xs ->
-            if itCollides toon xgo then 
-                removeIfCollides (toon, toons) xs
+        xsgo :: xs ->
+            if itCollides sgo.go xsgo.go then 
+                removeIfCollides sgo xs
             else
-                (xgo, xgs) :: removeIfCollides (toon, toons) xs
+                xsgo :: removeIfCollides sgo xs
 
 pickupExperienceDiamond : Model -> Model
 pickupExperienceDiamond model = 
@@ -162,18 +190,19 @@ pickupExperienceDiamond model =
         , experience = model.experience + experienceGained
     }
 
-moveBullet : (GameObject, Sprite) -> (GameObject, Sprite)
-moveBullet (bulletgo, bulletsprite) =
+moveBullet : SpriteGameObject -> SpriteGameObject
+moveBullet spgo =
     let
-        (x, y) = bulletgo.pos
-        nx = (bulletgo.dir * 10 |> toFloat) + x
+        (x, y) = spgo.go.pos
+        nx = (spgo.go.dir * 10 |> toFloat) + x
+
+        spgoGO = spgo.go
+        nextGo = {spgoGO | pos = (nx, y) }
     in
-    ( {bulletgo | pos = (nx, y)}
-    , bulletsprite
-    )    
+    {spgo | go = nextGo }  
 
 
-killEnemies : List (GameObject, Sprite) -> List (GameObject, Sprite) -> List (GameObject, Sprite)
+killEnemies : List SpriteGameObject -> List SpriteGameObject -> List SpriteGameObject
 killEnemies bullets enemies = 
     case (enemies, bullets) of
         ([], _) -> 
@@ -188,24 +217,40 @@ killEnemies bullets enemies =
 shootBullets : Model -> Model
 shootBullets model = 
     let
-        (toon, toonsprite) = model.knight
+        toon = model.knight
+        nextModel = 
+            { model 
+                | bullets = List.map moveBullet model.bullets
+                , enemies = killEnemies model.bullets model.enemies
+            }
+
+        deadEnemies = getRemoved model.enemies nextModel.enemies []
+
+        newExperienceDiamonds = 
+            List.indexedMap
+                ( \ index i -> 
+                    (SpriteGameObject
+                        ( GameObject i.go.pos 0 20 20)
+                        ( Sprite 288 320 16 16 1 0 )
+                        ((List.length model.experianceDiamond) + 1 + index)
+                    )
+                )
+                deadEnemies
+
+        modelWithXp = { nextModel | experianceDiamond = newExperienceDiamonds ++ nextModel.experianceDiamond }
         
     in
     if  modBy 50 model.ticks == 0 then 
-        { model 
+        { modelWithXp 
             | bullets = 
-                ( GameObject toon.pos toon.dir 20 20
-                , Sprite 336 224 16 16 0 0
+                (SpriteGameObject 
+                    (GameObject toon.go.pos toon.go.dir 20 20)
+                    (Sprite 336 224 16 16 0 0)
+                    (List.length model.bullets + 1)
                 ) :: model.bullets 
-                    |> List.map moveBullet
-            , enemies = killEnemies model.bullets model.enemies
         }
-
     else
-        { model 
-            | bullets = model.bullets |> List.map moveBullet
-            , enemies = killEnemies model.bullets model.enemies
-        }
+        modelWithXp
 
 calculateFPS : Time.Posix -> Time.Posix -> Float
 calculateFPS timestamp1 timestamp2 =
@@ -224,22 +269,23 @@ controllPlayer model =
         newKnight = 
             if handleFramerate model.ticks 5 then 
                 animate model.knight 
-                    |> moveOnKeyBoard model.pressedKeys
             else
                 model.knight
 
     in
-    { model | knight = newKnight }
+    { model | knight = newKnight |> moveOnKeyBoard model.pressedKeys }
 
 
-moveTowards (go, sprite) (go2, sprite2) = 
+moveTowards : SpriteGameObject -> SpriteGameObject -> SpriteGameObject
+moveTowards towards mover = 
     let
-        (twowardsPosX, towardsPosY) = go.pos
-        (movePosX, movePosY) = go2.pos
+        (twowardsPosX, towardsPosY) = towards.go.pos
+        (movePosX, movePosY) = mover.go.pos
         npx = if twowardsPosX > movePosX then movePosX + 1 else movePosX - 1
         npy = if towardsPosY > movePosY then movePosY + 1 else movePosY - 1
+        go = mover.go
     in
-    ({ go2 | pos = (npx, npy) }, sprite2)
+    { mover | go = { go | pos = (npx, npy)}}
 
 moveEnemies : Model -> Model
 moveEnemies model = 
@@ -263,9 +309,15 @@ update msg model =
         AddEnemy randomX -> 
             ({ model 
                 | enemies = 
-                    ( GameObject (randomX |> toFloat, 0) 1 20 20
-                    , Sprite 144 364 32 36 4 0
-                    ) :: model.enemies 
+                    [ SpriteGameObject
+                        (GameObject (randomX |> toFloat, 0) 1 20 20)
+                        ( Sprite 144 364 32 36 4 0 )
+                        (List.length model.enemies + 1)
+                    , SpriteGameObject
+                        (GameObject (randomX |> toFloat, 400) 1 20 20)
+                        ( Sprite 144 364 32 36 4 0 )
+                        (List.length model.enemies + 2)
+                    ] ++ model.enemies 
             }
             , Cmd.none)
 
@@ -294,23 +346,25 @@ update msg model =
 
 
 
-moveOnKeyBoard : List Keyboard.Key -> (GameObject, Sprite) -> (GameObject, Sprite)
-moveOnKeyBoard pressedKeys (go, sprite) =
+moveOnKeyBoard : List Keyboard.Key -> SpriteGameObject -> SpriteGameObject
+moveOnKeyBoard pressedKeys spriteGameObject =
     let
         arrows =
             Keyboard.Arrows.arrows pressedKeys
 
-        (cx, cy) = go.pos
-        newXPos = ( arrows.x * 20 |> toFloat) + cx 
-        newYPos = ( arrows.y * -1 * 20 |> toFloat) + cy
+        (cx, cy) = spriteGameObject.go.pos
+        go = spriteGameObject.go
+        newXPos = ( arrows.x * 2 |> toFloat) + cx 
+        newYPos = ( arrows.y * -1 * 2 |> toFloat) + cy
             
     in
-    ({ go 
-        | pos = (newXPos, newYPos)
-        , dir = if arrows.x == 0 then go.dir else arrows.x
+    { spriteGameObject
+        | go = 
+            { go 
+                |pos = (newXPos, newYPos)
+                , dir = if arrows.x == 0 then go.dir else arrows.x
+            }
     }
-    , sprite
-    )
    
 
 
