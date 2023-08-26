@@ -311,11 +311,11 @@ update msg model =
                 | enemies = 
                     [ SpriteGameObject
                         (GameObject (randomX |> toFloat, 0) 1 20 20)
-                        ( Sprite 144 364 32 36 4 0 )
+                        ( Sprite 192 228 16 28 4 0 )
                         (List.length model.enemies + 1)
                     , SpriteGameObject
                         (GameObject (randomX |> toFloat, 400) 1 20 20)
-                        ( Sprite 144 364 32 36 4 0 )
+                        ( Sprite 192 196 16 28 4 0 )
                         (List.length model.enemies + 2)
                     ] ++ model.enemies 
             }
