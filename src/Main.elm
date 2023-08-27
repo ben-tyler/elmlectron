@@ -123,7 +123,7 @@ view model =
         , div [] (List.map viewGameObject model.enemies)
         , div [] [ text <| "Experience " ++ String.fromInt model.experience]
         , div [] [ text <| "FPS " ++ Debug.toString model.fps ]
-       -- , div [] [ text <| Debug.toString model.enemies]
+        , div [] [ text <| " Sprite Count " ++ (Debug.toString <|  List.length model.enemies)]
         ]
 animate : SpriteGameObject -> SpriteGameObject
 animate spgo = 
@@ -140,7 +140,38 @@ handleFramerate : Int -> Int -> Bool
 handleFramerate ticks speed = 
     modBy speed ticks == 0
 
+type CollisionSide
+    = NoCollision
+    | TopCollision
+    | BottomCollision
+    | LeftCollision
+    | RightCollision
 
+detectCollisionSide : GameObject -> GameObject -> CollisionSide
+detectCollisionSide b1 b2 =
+    let
+        (b1x, b1y) = b1.pos
+        (b2x, b2y) = b2.pos
+        widthCollision = b1x < b2x + b2.w && b1x + b1.w > b2x
+        heightCollision = b1y < b2y + b2.h && b1y + b1.h > b2y
+    in
+    if widthCollision && heightCollision then
+        let
+            overlapX = min (b1x + b1.w - b2x) (b2x + b2.w - b1x)
+            overlapY = min (b1y + b1.h - b2y) (b2y + b2.h - b1y)
+        in
+        if overlapX < overlapY then
+            if b1x < b2x then
+                LeftCollision
+            else
+                RightCollision
+        else
+            if b1y < b2y then
+                TopCollision
+            else
+                BottomCollision
+    else
+        NoCollision
 
 itCollides : GameObject -> GameObject -> Bool
 itCollides b1 b2 =
@@ -148,7 +179,7 @@ itCollides b1 b2 =
         (b1x, b1y )= b1.pos
         (b2x, b2y) = b2.pos
         widthCollission = b1x < b2x + b2.w && b1x + b1.w > b2x
-        heightCollision = b1y < b2y + b2.h && b1.h + b1y > b2y
+        heightCollision = b1y < b2y + b2.h && b1y + b1.h > b2y
     in
     widthCollission && heightCollision
 
@@ -238,9 +269,10 @@ shootBullets model =
                 deadEnemies
 
         modelWithXp = { nextModel | experianceDiamond = newExperienceDiamonds ++ nextModel.experianceDiamond }
+        speed = if model.experience > 90 then 5 else  100 - model.experience
         
     in
-    if  modBy 50 model.ticks == 0 then 
+    if handleFramerate model.ticks speed then 
         { modelWithXp 
             | bullets = 
                 (SpriteGameObject 
@@ -276,23 +308,50 @@ controllPlayer model =
     { model | knight = newKnight |> moveOnKeyBoard model.pressedKeys }
 
 
-moveTowards : SpriteGameObject -> SpriteGameObject -> SpriteGameObject
-moveTowards towards mover = 
+moveTowards : SpriteGameObject -> List SpriteGameObject->  SpriteGameObject  -> SpriteGameObject 
+moveTowards towards dontcrashinto mover  = 
     let
         (twowardsPosX, towardsPosY) = towards.go.pos
         (movePosX, movePosY) = mover.go.pos
         npx = if twowardsPosX > movePosX then movePosX + 1 else movePosX - 1
         npy = if towardsPosY > movePosY then movePosY + 1 else movePosY - 1
         go = mover.go
+        crashes = 
+            List.foldl 
+                ( \ a r -> 
+                    case r of
+                        NoCollision -> 
+                            if a.id == mover.id then
+                                NoCollision 
+                            else 
+                                detectCollisionSide go a.go
+                        _ -> r
+                ) 
+                NoCollision
+                dontcrashinto
+
     in
-    { mover | go = { go | pos = (npx, npy)}}
+    case crashes of 
+        NoCollision -> 
+            { mover | go = { go | pos = (npx, npy)}}
+        LeftCollision -> 
+            { mover | go = { go | pos = (movePosX - 1, npy)}}
+
+        TopCollision ->
+            { mover | go = { go | pos = (npx, movePosY - 1)}}
+
+        BottomCollision ->
+            { mover | go = { go | pos = (npx, movePosY + 1)}}
+
+        RightCollision ->
+            { mover | go = { go | pos = (movePosX + 1, npy)}}
 
 moveEnemies : Model -> Model
 moveEnemies model = 
     if handleFramerate model.ticks 5 then 
         { model | enemies = List.map animate model.enemies }
     else
-        { model | enemies = List.map (moveTowards model.knight) model.enemies}
+        { model | enemies = List.map (moveTowards model.knight model.enemies) model.enemies}
 
 
 updateMetaData : Time.Posix -> Model -> Model 
@@ -309,13 +368,13 @@ update msg model =
         AddEnemy randomX -> 
             ({ model 
                 | enemies = 
-                    [ SpriteGameObject
+                    [ SpriteGameObject 
                         (GameObject (randomX |> toFloat, 0) 1 20 20)
-                        ( Sprite 192 228 16 28 4 0 )
+                        ( Sprite 192 228 16 28 4 (modBy 4 model.ticks |> toFloat) )
                         (List.length model.enemies + 1)
                     , SpriteGameObject
                         (GameObject (randomX |> toFloat, 400) 1 20 20)
-                        ( Sprite 192 196 16 28 4 0 )
+                        ( Sprite 192 196 16 28 4 (modBy 4 model.ticks |> toFloat) )
                         (List.length model.enemies + 2)
                     ] ++ model.enemies 
             }
@@ -338,7 +397,7 @@ update msg model =
                 |> shootBullets
                 |> moveEnemies
 
-            ,   if handleFramerate model.ticks 200 then 
+            ,   if handleFramerate model.ticks 30 then 
                     Random.generate AddEnemy (Random.int 1 400)
                 else
                     Cmd.none
