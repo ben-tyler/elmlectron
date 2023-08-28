@@ -13,6 +13,8 @@ import Time exposing (millisToPosix)
 import Html.Attributes exposing (width)
 import Platform.Cmd as Cmd
 import Dict exposing (remove)
+import Html.Attributes exposing (height)
+import Html exposing (a)
 
 dungeonSpriteSheet : String
 dungeonSpriteSheet = "0x72_DungeonTilesetII_v1.4.png"
@@ -49,6 +51,7 @@ type alias Model =
      , experianceDiamond : List SpriteGameObject
      , bullets : List SpriteGameObject
      , enemies : List SpriteGameObject
+     , level : Int
      }
 
      
@@ -68,6 +71,7 @@ init _ =
       , experianceDiamond = []
       , bullets = []
       , enemies = []
+      , level = 0
       }
       , Cmd.batch
         [ Random.generate AddDiamond (Random.int 1 400)
@@ -101,7 +105,8 @@ subscriptions _ =
         , onAnimationFrame LockedTick
         , Sub.map KeyMsg Keyboard.subscriptions
         ]                 
-       
+        
+viewGameObject : SpriteGameObject -> Html Msg
 viewGameObject spriteGameObject =
     viewSprite 
         dungeonSpriteSheet 
@@ -110,7 +115,7 @@ viewGameObject spriteGameObject =
         ( spriteGameObject.go.dir |> toFloat )
         spriteGameObject.go.pos
 
-view : Model -> Html.Html msg
+view : Model -> Html.Html Msg
 view model =
     div [ style "position" "relative"
         , style "overflow" "hidden"
@@ -244,6 +249,30 @@ killEnemies bullets enemies =
             killEnemies xs (removeIfCollides x e)
 
 
+itIsOutOfBounds : GameObject -> Float -> Float -> Bool
+itIsOutOfBounds b1 width height =
+    let
+        (b1x, b1y )= b1.pos
+        widthCollission = b1x < 0 || b1x > width
+        heightCollision = b1y < 0 || b1y > height
+    in
+    widthCollission || heightCollision
+
+
+removeOutOfBoundsBullets : Model -> Model 
+removeOutOfBoundsBullets model = 
+    { model 
+        | bullets = 
+            List.foldl 
+                (\ a b -> 
+                    if itIsOutOfBounds a.go 800 800 then 
+                        b
+                    else 
+                        a :: b
+                ) 
+                [] 
+                model.bullets
+    }
 
 shootBullets : Model -> Model
 shootBullets model = 
@@ -362,6 +391,12 @@ updateMetaData posix model =
       , fps = calculateFPS posix model.lastPosixTime
     }
 
+setLevel model = 
+    if modBy 200 model.ticks == 0 then 
+        { model | level = model.level + 1}
+    else
+        model
+
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
@@ -369,13 +404,13 @@ update msg model =
             ({ model 
                 | enemies = 
                     [ SpriteGameObject 
-                        (GameObject (randomX |> toFloat, 0) 1 20 20)
+                        (GameObject (randomX |> toFloat, -190) 1 20 20)
                         ( Sprite 192 228 16 28 4 (modBy 4 model.ticks |> toFloat) )
-                        (List.length model.enemies + 1)
+                        (model.ticks + 1)
                     , SpriteGameObject
-                        (GameObject (randomX |> toFloat, 400) 1 20 20)
+                        (GameObject (randomX |> toFloat, 600) 1 20 20)
                         ( Sprite 192 196 16 28 4 (modBy 4 model.ticks |> toFloat) )
-                        (List.length model.enemies + 2)
+                        (model.ticks + 2)
                     ] ++ model.enemies 
             }
             , Cmd.none)
@@ -395,9 +430,11 @@ update msg model =
                 |> controllPlayer
                 |> pickupExperienceDiamond
                 |> shootBullets
+                |> removeOutOfBoundsBullets
                 |> moveEnemies
+                |> setLevel
 
-            ,   if handleFramerate model.ticks 30 then 
+            ,   if handleFramerate model.ticks (100 - model.level) then 
                     Random.generate AddEnemy (Random.int 1 400)
                 else
                     Cmd.none
