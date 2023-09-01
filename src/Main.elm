@@ -15,6 +15,7 @@ import Platform.Cmd as Cmd
 import Dict exposing (remove)
 import Html.Attributes exposing (height)
 import Html exposing (a)
+import Html.Attributes exposing (dir)
 
 dungeonSpriteSheet : String
 dungeonSpriteSheet = "0x72_DungeonTilesetII_v1.4.png"
@@ -52,6 +53,7 @@ type alias Model =
      , bullets : List SpriteGameObject
      , enemies : List SpriteGameObject
      , level : Int
+     , doors : List SpriteGameObject
      }
 
      
@@ -64,7 +66,7 @@ init _ =
       , pressedKeys = []
       , knight = 
             SpriteGameObject
-                (GameObject (100, 100) 1 20 20)
+                (GameObject (400, 200) 1 20 20)
                 (Sprite 192 68 16 28 4 0)
                 1
       , experience = 0
@@ -72,6 +74,7 @@ init _ =
       , bullets = []
       , enemies = []
       , level = 0
+      , doors = []
       }
       , Cmd.batch
         [ Random.generate AddDiamond (Random.int 1 400)
@@ -85,7 +88,18 @@ init _ =
         ]
     )
 
-
+--
+--doors_all 16 221 64 35
+addDoor : Model -> Int -> Model
+addDoor model randomNumber = 
+    { model 
+        | doors = 
+            (SpriteGameObject
+                (GameObject (toFloat randomNumber, toFloat randomNumber) 0 20 20)
+                ( Sprite 16 221 64 35 1 0)
+                ( List.length model.doors + 1)
+            ) :: model.doors
+    }
 
 addDiamond : Model -> Int -> Model
 addDiamond model randomNumber = 
@@ -128,7 +142,7 @@ view model =
         , div [] (List.map viewGameObject model.enemies)
         , div [] [ text <| "Experience " ++ String.fromInt model.experience]
         , div [] [ text <| "FPS " ++ Debug.toString model.fps ]
-        , div [] [ text <| " Sprite Count " ++ (Debug.toString <|  List.length model.enemies)]
+        , div [] [ text <| " Sprite Count " ++ (String.fromInt <|  List.length model.enemies + List.length model.experianceDiamond + List.length model.b)]
         ]
 animate : SpriteGameObject -> SpriteGameObject
 animate spgo = 
@@ -317,7 +331,7 @@ calculateFPS : Time.Posix -> Time.Posix -> Float
 calculateFPS timestamp1 timestamp2 =
     let
         timeDifferenceInSeconds =
-            ((Time.posixToMillis timestamp2) - (Time.posixToMillis timestamp1) |> toFloat ) / 1000.0
+            ((Time.posixToMillis timestamp1) - (Time.posixToMillis timestamp2)|> toFloat ) / 1000.0
             -- Divide by 1000 to convert milliseconds to seconds
         frames = 1
         fps = frames / timeDifferenceInSeconds
@@ -333,8 +347,14 @@ controllPlayer model =
             else
                 model.knight
 
+        knightWithDirection = setDirectionGameObject (getDirFromArrows model.pressedKeys) newKnight
+
     in
-    { model | knight = newKnight |> moveOnKeyBoard model.pressedKeys }
+    { model 
+        | knight = knightWithDirection 
+        , experianceDiamond = List.map ( moveOnKeyboard model.pressedKeys) model.experianceDiamond
+        , enemies = List.map ( moveOnKeyboard model.pressedKeys) model.enemies
+     }
 
 
 moveTowards : SpriteGameObject -> List SpriteGameObject->  SpriteGameObject  -> SpriteGameObject 
@@ -388,7 +408,11 @@ updateMetaData posix model =
     { model 
       | ticks = model.ticks + 1 
       , lastPosixTime = posix
-      , fps = calculateFPS posix model.lastPosixTime
+      , fps =  
+            if handleFramerate model.ticks 30 then 
+                calculateFPS posix model.lastPosixTime 
+            else 
+                model.fps
     }
 
 setLevel model = 
@@ -441,24 +465,45 @@ update msg model =
             )
 
 
+getDirFromArrows :  List Keyboard.Key -> Int
+getDirFromArrows pressedKeys = 
+    let
+        arrows =
+            Keyboard.Arrows.arrows pressedKeys
+    in
+    
+    if arrows.x == 0 then 0 else arrows.x
 
-moveOnKeyBoard : List Keyboard.Key -> SpriteGameObject -> SpriteGameObject
-moveOnKeyBoard pressedKeys spriteGameObject =
+setDirectionGameObject : Int -> SpriteGameObject -> SpriteGameObject
+setDirectionGameObject dir spriteGameObject =
+    let
+        go = spriteGameObject.go
+            
+    in
+    { spriteGameObject
+        | go = 
+            { go 
+                | dir = if dir == 0 then go.dir else dir
+            }
+    }
+   
+
+moveOnKeyboard : List Keyboard.Key -> SpriteGameObject -> SpriteGameObject
+moveOnKeyboard pressedKeys spriteGameObject =
     let
         arrows =
             Keyboard.Arrows.arrows pressedKeys
 
         (cx, cy) = spriteGameObject.go.pos
         go = spriteGameObject.go
-        newXPos = ( arrows.x * 2 |> toFloat) + cx 
-        newYPos = ( arrows.y * -1 * 2 |> toFloat) + cy
+        newXPos = ( arrows.x * 2 * -1 |> toFloat) + cx 
+        newYPos = ( arrows.y  * 2 |> toFloat) + cy
             
     in
     { spriteGameObject
         | go = 
             { go 
                 |pos = (newXPos, newYPos)
-                , dir = if arrows.x == 0 then go.dir else arrows.x
             }
     }
    
