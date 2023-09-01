@@ -141,8 +141,8 @@ view model =
         , div [] (List.map viewGameObject model.bullets )
         , div [] (List.map viewGameObject model.enemies)
         , div [] [ text <| "Experience " ++ String.fromInt model.experience]
-        , div [] [ text <| "FPS " ++ Debug.toString model.fps ]
-        , div [] [ text <| " Sprite Count " ++ (String.fromInt <|  List.length model.enemies + List.length model.experianceDiamond + List.length model.b)]
+        , div [] [ text <| "FPS " ++ String.fromFloat model.fps ]
+        , div [] [ text <| " Sprite Count " ++ (String.fromInt <|  List.length model.enemies + List.length model.experianceDiamond + List.length model.bullets)]
         ]
 animate : SpriteGameObject -> SpriteGameObject
 animate spgo = 
