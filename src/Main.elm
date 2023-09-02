@@ -16,6 +16,7 @@ import Dict exposing (remove)
 import Html.Attributes exposing (height)
 import Html exposing (a)
 import Html.Attributes exposing (dir)
+import Html exposing (th)
 
 dungeonSpriteSheet : String
 dungeonSpriteSheet = "0x72_DungeonTilesetII_v1.4.png"
@@ -36,10 +37,22 @@ type alias GameObject =
     , h : Float
     }
 
+type alias PlayerData = 
+    { health : Int
+
+    }
+
+type GameData = 
+    Player PlayerData
+    | Enemy
+    | Pickup
+
+
 type alias SpriteGameObject = 
     { go: GameObject
     , sp: Sprite
     , id: Int
+    , data : GameData
     }
 
 type alias Model =
@@ -54,6 +67,7 @@ type alias Model =
      , enemies : List SpriteGameObject
      , level : Int
      , doors : List SpriteGameObject
+     , dead : Bool
      }
 
      
@@ -69,12 +83,14 @@ init _ =
                 (GameObject (400, 200) 1 20 20)
                 (Sprite 192 68 16 28 4 0)
                 1
+                (Player (PlayerData 100))
       , experience = 0
       , experianceDiamond = []
       , bullets = []
       , enemies = []
       , level = 0
       , doors = []
+      , dead = False
       }
       , Cmd.batch
         [ Random.generate AddDiamond (Random.int 1 400)
@@ -98,6 +114,7 @@ addDoor model randomNumber =
                 (GameObject (toFloat randomNumber, toFloat randomNumber) 0 20 20)
                 ( Sprite 16 221 64 35 1 0)
                 ( List.length model.doors + 1)
+                Enemy
             ) :: model.doors
     }
 
@@ -109,6 +126,7 @@ addDiamond model randomNumber =
                 ( GameObject (toFloat randomNumber, toFloat randomNumber) 0 20 20)
                 ( Sprite 288 320 16 16 1 0 )
                 (List.length model.experianceDiamond + 1)
+                Pickup
             ) :: model.experianceDiamond 
     }
 
@@ -119,15 +137,30 @@ subscriptions _ =
         , onAnimationFrame LockedTick
         , Sub.map KeyMsg Keyboard.subscriptions
         ]                 
+
+moveUp : (Float, Float) -> (Float, Float)
+moveUp (x, y) =
+    ( x, y - 15)
         
 viewGameObject : SpriteGameObject -> Html Msg
 viewGameObject spriteGameObject =
-    viewSprite 
-        dungeonSpriteSheet 
-        scaleConstant 
-        spriteGameObject.sp 
-        ( spriteGameObject.go.dir |> toFloat )
-        spriteGameObject.go.pos
+    div []
+        [ viewSprite 
+            dungeonSpriteSheet 
+            scaleConstant 
+            spriteGameObject.sp 
+            ( spriteGameObject.go.dir |> toFloat )
+            spriteGameObject.go.pos
+        , div ( spriteGameObject.go.pos |> moveUp |> drawPosition)
+            [text 
+                (case spriteGameObject.data of 
+                    Player pd -> 
+                        String.fromInt pd.health
+                    _ -> 
+                        ""
+                )
+            ]
+        ]
 
 view : Model -> Html.Html Msg
 view model =
@@ -136,7 +169,8 @@ view model =
         , style "width" "700px"
         , style "height" "500px"
         ]
-        [ viewGameObject model.knight
+        [ if model.dead then text "DEAD" else text ""
+        , viewGameObject model.knight
         , div [] (List.map viewGameObject model.experianceDiamond )
         , div [] (List.map viewGameObject model.bullets )
         , div [] (List.map viewGameObject model.enemies)
@@ -307,6 +341,7 @@ shootBullets model =
                         ( GameObject i.go.pos 0 20 20)
                         ( Sprite 288 320 16 16 1 0 )
                         ((List.length model.experianceDiamond) + 1 + index)
+                        Pickup
                     )
                 )
                 deadEnemies
@@ -322,6 +357,7 @@ shootBullets model =
                     (GameObject toon.go.pos toon.go.dir 20 20)
                     (Sprite 336 224 16 16 0 0)
                     (List.length model.bullets + 1)
+                    Pickup
                 ) :: model.bullets 
         }
     else
@@ -403,6 +439,39 @@ moveEnemies model =
         { model | enemies = List.map (moveTowards model.knight model.enemies) model.enemies}
 
 
+takeDamage : Model -> Model
+takeDamage model = 
+    let
+        knight = model.knight
+        go = model.knight.go
+        data = model.knight.data
+        hitsPlayer = 
+            List.foldl 
+                ( \ a r -> 
+                    if itCollides go a.go then
+                        a :: r
+                    else
+                        r
+                ) 
+                []
+                model.enemies
+    in
+    case data of 
+        Player p -> 
+            { model 
+                | knight = 
+                    { knight | 
+                        data =
+                            p.health - List.length hitsPlayer
+                                |> PlayerData
+                                |> Player
+                    }
+
+                , dead = p.health < 1
+            }
+        _ -> 
+            model
+
 updateMetaData : Time.Posix -> Model -> Model 
 updateMetaData posix model = 
     { model 
@@ -431,10 +500,12 @@ update msg model =
                         (GameObject (randomX |> toFloat, -190) 1 20 20)
                         ( Sprite 192 228 16 28 4 (modBy 4 model.ticks |> toFloat) )
                         (model.ticks + 1)
+                        Enemy
                     , SpriteGameObject
                         (GameObject (randomX |> toFloat, 600) 1 20 20)
                         ( Sprite 192 196 16 28 4 (modBy 4 model.ticks |> toFloat) )
                         (model.ticks + 2)
+                        Enemy
                     ] ++ model.enemies 
             }
             , Cmd.none)
@@ -456,6 +527,7 @@ update msg model =
                 |> shootBullets
                 |> removeOutOfBoundsBullets
                 |> moveEnemies
+                |> takeDamage
                 |> setLevel
 
             ,   if handleFramerate model.ticks (100 - model.level) then 
@@ -548,7 +620,7 @@ scaleSprite factor direction =
         ++ direction
         ++ ")"
 
-viewSprite : String -> Float -> Sprite -> Float -> ( Float, Float ) -> Html msg
+viewSprite : String -> Float -> Sprite -> Float -> ( Float, Float ) -> Html Msg
 viewSprite spriteSheet scale sprite dir ( xloc, yloc ) =
     let
         spriteDirection =
