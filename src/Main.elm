@@ -20,6 +20,87 @@ import Html exposing (th)
 
 dungeonSpriteSheet : String
 dungeonSpriteSheet = "0x72_DungeonTilesetII_v1.4.png"
+
+bloodsplatOne = "bloodsplat1_strip16.png"
+bloodsplatTwo = "bloodsplat2_strip13.png"
+bloodsplatThree = "bloodsplat3_strip15.png"
+
+
+map = 
+    """
+|---------------|     ****             
+|***************|     ****         
+|********************************|     
+|********************************|        
+|***************|     *****                  
+|---------------|     *****               
+                      ***** 
+                      *****                 
+                      *****               
+                      *******************
+                      *******************
+                                    *****
+                                    *****
+                                    *****
+                                    *****
+                                    *****
+"""
+
+mapToList : String -> List (List Char)
+mapToList mapString =
+    String.lines mapString |> List.map String.toList
+
+
+characterToSprite : Char -> Int -> Int -> SpriteGameObject
+characterToSprite char row col =
+    let
+        rowf = toFloat row * 30
+        colf = toFloat col * 30
+    in
+    case char of
+        '*' -> -- Use an HTML element or an img tag to represent the sprite for '*'
+             SpriteGameObject
+                (GameObject (rowf, colf) 1 20 20)
+                (Sprite 16 64 16 16 0 0 dungeonSpriteSheet)
+                1
+                Map
+
+        _ -> -- Handle other characters as needed
+             SpriteGameObject
+                (GameObject (rowf, colf) 1 20 20)
+                (Sprite 32 16 16 16 0 0 dungeonSpriteSheet)
+                1
+                Map
+
+
+flatten list =
+    case list of
+        [] ->
+            []
+
+        head :: tail ->
+            case head of
+                [] ->
+                    flatten tail
+
+                subList ->
+                    subList ++ flatten tail
+
+renderMap : String -> List SpriteGameObject
+renderMap mapString =
+    let
+        rows = mapToList mapString
+        renderRow rowIndex row =
+            List.indexedMap 
+                (\colIndex char ->
+                    characterToSprite char rowIndex colIndex
+                )
+                row
+                
+    in
+    List.indexedMap renderRow rows |> flatten
+
+
 scaleConstant : Float
 scaleConstant = 2
 
@@ -46,6 +127,7 @@ type GameData =
     Player PlayerData
     | Enemy
     | Pickup
+    | Map
 
 
 type alias SpriteGameObject = 
@@ -68,6 +150,8 @@ type alias Model =
      , level : Int
      , doors : List SpriteGameObject
      , dead : Bool
+     , effects : List SpriteGameObject
+     , map : List SpriteGameObject
      }
 
      
@@ -81,7 +165,7 @@ init _ =
       , knight = 
             SpriteGameObject
                 (GameObject (400, 200) 1 20 20)
-                (Sprite 192 68 16 28 4 0)
+                (Sprite 192 68 16 28 4 0 dungeonSpriteSheet)
                 1
                 (Player (PlayerData 100))
       , experience = 0
@@ -91,6 +175,8 @@ init _ =
       , level = 0
       , doors = []
       , dead = False
+      , effects = []
+      , map = renderMap map
       }
       , Cmd.batch
         [ Random.generate AddDiamond (Random.int 1 400)
@@ -110,24 +196,24 @@ addDoor : Model -> Int -> Model
 addDoor model randomNumber = 
     { model 
         | doors = 
-            (SpriteGameObject
-                (GameObject (toFloat randomNumber, toFloat randomNumber) 0 20 20)
-                ( Sprite 16 221 64 35 1 0)
-                ( List.length model.doors + 1)
-                Enemy
-            ) :: model.doors
+            { go = GameObject (toFloat randomNumber, toFloat randomNumber) 0 20 20
+            , sp = Sprite 16 221 64 35 1 0 dungeonSpriteSheet
+            , id = List.length model.doors + 1
+            , data = Enemy
+            }
+            :: model.doors
     }
 
 addDiamond : Model -> Int -> Model
 addDiamond model randomNumber = 
     { model 
         | experianceDiamond = 
-            (SpriteGameObject
-                ( GameObject (toFloat randomNumber, toFloat randomNumber) 0 20 20)
-                ( Sprite 288 320 16 16 1 0 )
-                (List.length model.experianceDiamond + 1)
-                Pickup
-            ) :: model.experianceDiamond 
+            { go = GameObject (toFloat randomNumber, toFloat randomNumber) 0 20 20
+            , sp = Sprite  288 320 16 16 1 0 dungeonSpriteSheet
+            , id = List.length model.experianceDiamond + 1
+            , data = Pickup
+            }
+            :: model.experianceDiamond 
     }
 
 subscriptions : Model -> Sub Msg
@@ -140,13 +226,13 @@ subscriptions _ =
 
 moveUp : (Float, Float) -> (Float, Float)
 moveUp (x, y) =
-    ( x, y - 15)
+    ( x, y - 25)
         
 viewGameObject : SpriteGameObject -> Html Msg
 viewGameObject spriteGameObject =
     div []
         [ viewSprite 
-            dungeonSpriteSheet 
+            spriteGameObject.sp.spriteSheet 
             scaleConstant 
             spriteGameObject.sp 
             ( spriteGameObject.go.dir |> toFloat )
@@ -170,10 +256,12 @@ view model =
         , style "height" "500px"
         ]
         [ if model.dead then text "DEAD" else text ""
+        , div [] (List.map viewGameObject model.map )
         , viewGameObject model.knight
         , div [] (List.map viewGameObject model.experianceDiamond )
         , div [] (List.map viewGameObject model.bullets )
         , div [] (List.map viewGameObject model.enemies)
+        , div [] (List.map viewGameObject model.effects)
         , div [] [ text <| "Experience " ++ String.fromInt model.experience]
         , div [] [ text <| "FPS " ++ String.fromFloat model.fps ]
         , div [] [ text <| " Sprite Count " ++ (String.fromInt <|  List.length model.enemies + List.length model.experianceDiamond + List.length model.bullets)]
@@ -337,12 +425,12 @@ shootBullets model =
         newExperienceDiamonds = 
             List.indexedMap
                 ( \ index i -> 
-                    (SpriteGameObject
-                        ( GameObject i.go.pos 0 20 20)
-                        ( Sprite 288 320 16 16 1 0 )
-                        ((List.length model.experianceDiamond) + 1 + index)
-                        Pickup
-                    )
+                    { go = GameObject i.go.pos 0 20 20
+                    , sp = Sprite  288 320 16 16 1 0 dungeonSpriteSheet
+                    , id = List.length model.experianceDiamond + 1 + index
+                    , data = Pickup
+                    }
+                    
                 )
                 deadEnemies
 
@@ -353,12 +441,12 @@ shootBullets model =
     if handleFramerate model.ticks speed then 
         { modelWithXp 
             | bullets = 
-                (SpriteGameObject 
-                    (GameObject toon.go.pos toon.go.dir 20 20)
-                    (Sprite 336 224 16 16 0 0)
-                    (List.length model.bullets + 1)
-                    Pickup
-                ) :: model.bullets 
+                { go = GameObject toon.go.pos toon.go.dir 20 20
+                    , sp = Sprite  288 320 16 16 1 0 dungeonSpriteSheet
+                    , id = List.length model.bullets + 1
+                    , data = Pickup
+                }
+                :: model.bullets 
         }
     else
         modelWithXp
@@ -390,6 +478,7 @@ controllPlayer model =
         | knight = knightWithDirection 
         , experianceDiamond = List.map ( moveOnKeyboard model.pressedKeys) model.experianceDiamond
         , enemies = List.map ( moveOnKeyboard model.pressedKeys) model.enemies
+        , map = List.map ( moveOnKeyboard model.pressedKeys) model.map
      }
 
 
@@ -466,7 +555,18 @@ takeDamage model =
                                 |> PlayerData
                                 |> Player
                     }
-
+                --, effects =
+                    --(List.map
+                    --    ( \ i ->  
+                    --        { go = GameObject i.go.pos 0 20 20
+                    --        , sp = Sprite  0 0 480 480 9 1 bloodsplatOne
+                    --        , id = List.length model.effects + 1 
+                    --        , data = Pickup
+                    --        }
+                    --    )
+                    --    hitsPlayer
+                    --)
+                   -- == ++ model.effects 
                 , dead = p.health < 1
             }
         _ -> 
@@ -490,23 +590,31 @@ setLevel model =
     else
         model
 
+handleGameEffects : Model -> Model
+handleGameEffects model = 
+    if handleFramerate model.ticks 5 then 
+        { model | effects = List.map animate model.effects } 
+    else
+        model
+
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         AddEnemy randomX -> 
             ({ model 
                 | enemies = 
-                    [ SpriteGameObject 
-                        (GameObject (randomX |> toFloat, -190) 1 20 20)
-                        ( Sprite 192 228 16 28 4 (modBy 4 model.ticks |> toFloat) )
-                        (model.ticks + 1)
-                        Enemy
-                    , SpriteGameObject
-                        (GameObject (randomX |> toFloat, 600) 1 20 20)
-                        ( Sprite 192 196 16 28 4 (modBy 4 model.ticks |> toFloat) )
-                        (model.ticks + 2)
-                        Enemy
-                    ] ++ model.enemies 
+                    [  { go = GameObject (randomX |> toFloat, -190) 1 20 20
+                        , sp = Sprite 192 228 16 28 4 (modBy 4 model.ticks |> toFloat) dungeonSpriteSheet
+                        , id = model.ticks + 1
+                        , data = Enemy
+                        }
+                    ,   { go = GameObject (randomX |> toFloat, 190) 1 20 20
+                        , sp = Sprite 192 228 16 28 4 (modBy 4 model.ticks |> toFloat) dungeonSpriteSheet
+                        , id = model.ticks + 2
+                        , data = Enemy
+                        }
+                    ]
+                   ++ model.enemies 
             }
             , Cmd.none)
 
@@ -529,6 +637,7 @@ update msg model =
                 |> moveEnemies
                 |> takeDamage
                 |> setLevel
+                |> handleGameEffects
 
             ,   if handleFramerate model.ticks (100 - model.level) then 
                     Random.generate AddEnemy (Random.int 1 400)
@@ -598,6 +707,7 @@ type alias Sprite =
     , h : Float
     , frames : Float
     , currentFrame : Float
+    , spriteSheet : String
     }
 
 setSpriteSheet : Sprite -> String
